@@ -29,10 +29,54 @@ DEFAULT_COLORS = [
 ]
 
 st.set_page_config(
-    page_title="Temperatuur & Vocht Dashboard Wilderhof", layout="wide"
+    page_title="EIP Project - Biomeiler Dashboard", layout="wide"
 )
 
-st.title("🌡️💧 Temperatuur & Vocht Dashboard Wilderhof (Cloud)")
+# ==================================================
+# LOGIN SCHERM (STRIKT GESCHEIDEN PER PARTNER)
+# ==================================================
+
+if "ingelogd_partner" not in st.session_state:
+    st.session_state["ingelogd_partner"] = None
+
+if st.session_state["ingelogd_partner"] is None:
+    st.title("🔒 EIP Project Biomeilers - Inloggen")
+    st.info(
+        "Log in met de gegevens van jouw organisatie om het dashboard te"
+        " bekijken."
+    )
+
+    with st.form("login_form"):
+        gebruikersnaam = st.text_input("Gebruikersnaam")
+        wachtwoord = st.text_input("Wachtwoord", type="password")
+        submit_knop = st.form_submit_button("Inloggen")
+
+        if submit_knop:
+            # Vaste inloggegevens per partner (en admin)
+            if (
+                gebruikersnaam.strip().lower() == "wilderhof"
+                and wachtwoord == "Wilderhof26"
+            ):
+                st.session_state["ingelogd_partner"] = "Wilderhof"
+                st.rerun()
+            elif (
+                gebruikersnaam.strip().lower() == "pch"
+                and wachtwoord == "PCH26"
+            ):
+                st.session_state["ingelogd_partner"] = "PC Hoogstraten"
+                st.rerun()
+            elif (
+                gebruikersnaam.strip().lower() == "admin"
+                and wachtwoord == "adminUCLL"
+            ):
+                st.session_state["ingelogd_partner"] = "Admin (Beheer)"
+                st.rerun()
+            else:
+                st.error("Onjuiste gebruikersnaam of wachtwoord.")
+
+    # Stop de app zodat er geen data zichtbaar is zolang men niet is ingelogd
+    st.stop()
+
 
 # ==================================================
 # FUNCTIES VOOR KLEURBEHEER & ZONSTIJDEN
@@ -59,7 +103,7 @@ def save_colors(colors_dict):
 
 @st.cache_data
 def get_sun_times(date_obj, lat=50.85, lon=5.35):
-    """Berekent automatisch zonsopgang en zonsondergang voor Wilderhof (gecachet)."""
+    """Berekent automatisch zonsopgang en zonsondergang (gecachet)."""
     day_of_year = date_obj.timetuple().tm_yday
     lng_hour = lon / 15.0
     results = {}
@@ -340,18 +384,25 @@ def verwerk_geuploade_bestanden(uploaded_files):
 
 
 # ==================================================
-# SIDEBAR: WACHTWOORD, UPLOADEN & FILTERS
+# TITEL & SIDEBAR: INGELOGD GEGEVENS & UPLOADEN
 # ==================================================
 
-st.sidebar.header("📂 Databron Beheer")
-
-# Wachtwoordbeveiliging voor uploads
-beheerders_wachtwoord = st.sidebar.text_input(
-    "Beheerderswachtwoord", type="password"
+st.title(
+    f"🌡️💧 Temperatuur & Vocht Dashboard - {st.session_state['ingelogd_partner']}"
 )
 
-if beheerders_wachtwoord == "adminUCLL":
-    st.sidebar.success("Beheerdersmodus actief")
+st.sidebar.write(
+    f"👤 Ingelogd als: **{st.session_state['ingelogd_partner']}**"
+)
+if st.sidebar.button("🚪 Uitloggen", use_container_width=True):
+    st.session_state["ingelogd_partner"] = None
+    st.rerun()
+
+st.sidebar.write("---")
+st.sidebar.header("📂 Databron Beheer")
+
+# Alleen de Admin mag bestanden uploaden
+if "Admin" in st.session_state["ingelogd_partner"]:
     uploaded_files = st.sidebar.file_uploader(
         "Upload Senzemo Excel-bestanden",
         type=["xlsx", "xlsm", "xls"],
@@ -367,13 +418,12 @@ if beheerders_wachtwoord == "adminUCLL":
             st.sidebar.success("Historie succesvol bijgewerkt!")
             st.rerun()
 else:
-    if beheerders_wachtwoord:
-        st.sidebar.error("Onjuist wachtwoord")
     st.sidebar.info(
-        "🔒 Vul het beheerderswachtwoord in om bestanden te kunnen uploaden."
+        "🔒 Uploaden is voorbehouden aan de beheerder. Je bekijkt nu de"
+        " actuele data."
     )
 
-# Altijd de bestaande historie inlezen
+# Altijd de lokale historie inlezen van deze map
 if HISTORIE_FILE.exists():
     df = pd.read_parquet(HISTORIE_FILE)
 else:
@@ -381,7 +431,8 @@ else:
 
 if df.empty:
     st.warning(
-        "⚠️ Nog geen historische data gevonden. Vul het wachtwoord in en upload je Excel-bestanden om te beginnen."
+        "⚠️ Nog geen historische data gevonden in deze map. Upload via het"
+        " admin-account de Excel-bestanden om te beginnen."
     )
     st.stop()
 
@@ -578,7 +629,9 @@ else:
 
     with col_btn_l:
         st.write("")
-        if st.button("◀️ Terug", use_container_width=True, help="Schuif periode terug"):
+        if st.button(
+            "◀️ Terug", use_container_width=True, help="Schuif periode terug"
+        ):
             new_start = max(min_dt, selected_dt_range[0] - duration)
             new_end = new_start + duration
             if "x_axis_slider" in st.session_state:
@@ -598,7 +651,9 @@ else:
 
     with col_btn_r:
         st.write("")
-        if st.button("Verder ▶️", use_container_width=True, help="Schuif periode verder"):
+        if st.button(
+            "Verder ▶️", use_container_width=True, help="Schuif periode verder"
+        ):
             new_end = min(max_dt, selected_dt_range[1] + duration)
             new_start = new_end - duration
             if "x_axis_slider" in st.session_state:
@@ -612,7 +667,9 @@ else:
     ]
 
     df_temp = df_slider_filtered[df_slider_filtered["Type"] == "Temperatuur"]
-    df_vocht = df_slider_filtered[df_slider_filtered["Type"] == "Vochtgehalte"]
+    df_vocht = df_slider_filtered[
+        df_slider_filtered["Type"] == "Vochtgehalte"
+    ]
 
     fig = make_subplots(specs=[[{"secondary_y": True}]])
 
@@ -797,7 +854,7 @@ with col_exp2:
             st.download_button(
                 label="📊 Download Excel Bestand",
                 data=output.getvalue(),
-                file_name="Groeitijd_Analyse_Wilderhof.xlsx",
+                file_name="Groeitijd_Analyse.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 use_container_width=True,
             )
