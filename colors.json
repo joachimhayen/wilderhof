@@ -1,0 +1,13 @@
+{
+    "BIOMEILER CENTER": "#1f77b4",
+    "BIOMEILER RAND BOVENAAN": "#9301f8",
+    "BIOMEILER RAND ONDERAAN": "#2ca02c",
+    "NIET VERWARMD BEGIN": "#d62728",
+    "NIET VERWARMD EINDE": "#d62729",
+    "R1 BEGIN": "#040bf5",
+    "R1 EINDE": "#e377c2",
+    "R5 BEGIN": "#ff600f",
+    "R7 BEGIN": "#39f607",
+    "TEMP BUITEN": "#fdf903",
+    "VOCHTGEHALTE": "#00090f"
+}
