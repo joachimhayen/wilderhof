@@ -114,7 +114,6 @@ def get_sun_times(date_obj, lat=50.85, lon=5.35):
     results = {}
 
     for is_sunrise in [True, False]:
-        # Correcte geschatte aanvangstijd: 6h voor zonsopgang, 18h voor zonsondergang
         t_approx = (
             day_of_year + ((6.0 if is_sunrise else 18.0) - lng_hour) / 24.0
         )
@@ -157,7 +156,6 @@ def get_sun_times(date_obj, lat=50.85, lon=5.35):
         T = H + RA - (0.06571 * t_approx) - 6.622
         UT = (T - lng_hour) % 24.0
 
-        # Voor zonsondergang moeten we zorgen dat UT in de avond valt (> 12 uur)
         if not is_sunrise and UT < 12.0:
             UT = (UT + 12.0) % 24.0
             if UT < 12.0:
@@ -187,7 +185,7 @@ def get_sun_times(date_obj, lat=50.85, lon=5.35):
 
 
 # ==================================================
-# BEREKENING GROEITIJD & ROBUUSTE NACHTELIJKE WARMTE ANALYSE
+# BEREKENING GROEITIJD & NACHTELIJKE WARMTE ANALYSE
 # ==================================================
 
 
@@ -221,18 +219,15 @@ def bereken_groeitijd(df_input, min_temp, max_temp):
         if not sunrise_dt or not sunset_dt:
             continue
 
-        # Vorige zonsondergang (avond gisteren)
         _, prev_sunset_dt = get_sun_times(d - datetime.timedelta(days=1))
         if not prev_sunset_dt:
             prev_sunset_dt = sunrise_dt - pd.Timedelta(hours=14)
 
-        # Filter streng voor overdag (tussen zonsopgang en zonsondergang van vandaag)
         df_dag = df_temp_only[
             (df_temp_only["DatumTijd"] >= sunrise_dt)
             & (df_temp_only["DatumTijd"] <= sunset_dt)
         ]
 
-        # Filter streng voor 's nachts (tussen zonsondergang gisterenavond en zonsopgang vanochtend)
         df_nacht = df_temp_only[
             (df_temp_only["DatumTijd"] >= prev_sunset_dt)
             & (df_temp_only["DatumTijd"] <= sunrise_dt)
@@ -271,9 +266,11 @@ def bereken_groeitijd(df_input, min_temp, max_temp):
                     geldig_niet_verwarmd_dag
                 )
 
-        # 2. Nachtelijke warmteanalyse met strenge tijdslot-matching en maximumgrens
+        # 2. Nachtelijke warmteanalyse (blokken én gemiddeld temperatuurverschil in °C)
         nacht_warmere_blokken_dict = {}
+        nacht_gem_verschil_dict = {}
         totaal_nacht_slots = 0
+
         if not df_nacht.empty and niet_verwarmde_locs:
             ref_loc = niet_verwarmde_locs[0]
             df_ref_nacht = df_nacht[df_nacht["Locatie"] == ref_loc].copy()
@@ -288,6 +285,7 @@ def bereken_groeitijd(df_input, min_temp, max_temp):
                 for loc in df_nacht["Locatie"].unique():
                     if str(loc).upper().startswith("NIET VERWARMD"):
                         nacht_warmere_blokken_dict[loc] = 0
+                        nacht_gem_verschil_dict[loc] = 0.0
                         continue
 
                     sub_loc = df_nacht[df_nacht["Locatie"] == loc].copy()
@@ -295,10 +293,13 @@ def bereken_groeitijd(df_input, min_temp, max_temp):
                     loc_map = sub_loc.set_index("Slot")["Waarde"].to_dict()
 
                     warmere_telling = 0
+                    verschillen = []
                     for slot, val_loc in loc_map.items():
                         if slot in ref_map:
                             val_ref = ref_map[slot]
-                            if val_loc > val_ref:
+                            diff = val_loc - val_ref
+                            verschillen.append(diff)
+                            if diff > 0:
                                 warmere_telling += 1
 
                     if totaal_nacht_slots > 0:
@@ -307,6 +308,11 @@ def bereken_groeitijd(df_input, min_temp, max_temp):
                         )
 
                     nacht_warmere_blokken_dict[loc] = warmere_telling
+                    nacht_gem_verschil_dict[loc] = (
+                        round(sum(verschillen) / len(verschillen), 2)
+                        if verschillen
+                        else 0.0
+                    )
 
         alle_locs = set(
             list(dag_blokken.keys())
@@ -329,6 +335,7 @@ def bereken_groeitijd(df_input, min_temp, max_temp):
 
             nacht_warmere_blokken = nacht_warmere_blokken_dict.get(loc, 0)
             nacht_warmere_uren = nacht_warmere_blokken * 0.25
+            nacht_gem_verschil = nacht_gem_verschil_dict.get(loc, 0.0)
 
             results.append({
                 "Datum": d.strftime("%d/%m/%Y"),
@@ -342,6 +349,7 @@ def bereken_groeitijd(df_input, min_temp, max_temp):
                 "Nachtelijke Warmte-extra (uren)": round(
                     nacht_warmere_uren, 2
                 ),
+                "Gemiddeld Temp. Verschil Nacht (°C)": nacht_gem_verschil,
             })
 
     return pd.DataFrame(results)
@@ -993,6 +1001,14 @@ with col_exp2:
                             " verwarmde rij effectief warmer is dan de"
                             " onverwarmde referentie. Dit toont de"
                             " bufferwerking tegen nachtelijke afkoeling."
+                        ),
+                    ],
+                    [
+                        "Gemiddeld Temp. Verschil Nacht (°C)",
+                        (
+                            "Het gemiddelde temperatuurverschil in graden"
+                            " Celsius dat de verwarmde rij 's nachts warmer is"
+                            " dan de onverwarmde referentie."
                         ),
                     ],
                 ]
