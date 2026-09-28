@@ -185,7 +185,7 @@ def get_sun_times(date_obj, lat=50.85, lon=5.35):
 
 
 # ==================================================
-# BEREKENING GROEITIJD & NACHTELIJKE WARMTE ANALYSE
+# BEREKENING GROEITIJD & ROBUUSTE NACHTELIJKE WARMTE ANALYSE
 # ==================================================
 
 
@@ -266,7 +266,7 @@ def bereken_groeitijd(df_input, min_temp, max_temp):
                     geldig_niet_verwarmd_dag
                 )
 
-        # 2. Nachtelijke warmteanalyse (blokken én gemiddeld temperatuurverschil in °C)
+        # 2. Nachtelijke warmteanalyse (uitsluitend positieve verschillen meetellen)
         nacht_warmere_blokken_dict = {}
         nacht_gem_verschil_dict = {}
         totaal_nacht_slots = 0
@@ -293,14 +293,14 @@ def bereken_groeitijd(df_input, min_temp, max_temp):
                     loc_map = sub_loc.set_index("Slot")["Waarde"].to_dict()
 
                     warmere_telling = 0
-                    verschillen = []
+                    positieve_verschillen = []
                     for slot, val_loc in loc_map.items():
                         if slot in ref_map:
                             val_ref = ref_map[slot]
                             diff = val_loc - val_ref
-                            verschillen.append(diff)
                             if diff > 0:
                                 warmere_telling += 1
+                                positieve_verschillen.append(diff)
 
                     if totaal_nacht_slots > 0:
                         warmere_telling = min(
@@ -309,8 +309,12 @@ def bereken_groeitijd(df_input, min_temp, max_temp):
 
                     nacht_warmere_blokken_dict[loc] = warmere_telling
                     nacht_gem_verschil_dict[loc] = (
-                        round(sum(verschillen) / len(verschillen), 2)
-                        if verschillen
+                        round(
+                            sum(positieve_verschillen)
+                            / len(positieve_verschillen),
+                            2,
+                        )
+                        if positieve_verschillen
                         else 0.0
                     )
 
@@ -999,16 +1003,17 @@ with col_exp2:
                             "Het aantal uren (in blokken van 15 minuten)"
                             " tussen zonsondergang en zonsopgang waarin de"
                             " verwarmde rij effectief warmer is dan de"
-                            " onverwarmde referentie. Dit toont de"
-                            " bufferwerking tegen nachtelijke afkoeling."
+                            " onverwarmde referentie (strikt positief"
+                            " temperatuurverschil)."
                         ),
                     ],
                     [
                         "Gemiddeld Temp. Verschil Nacht (°C)",
                         (
                             "Het gemiddelde temperatuurverschil in graden"
-                            " Celsius dat de verwarmde rij 's nachts warmer is"
-                            " dan de onverwarmde referentie."
+                            " Celsius over de nachtelijke warmteblokken"
+                            " (waarbij de verwarmde rij warmer is dan de"
+                            " onverwarmde referentie)."
                         ),
                     ],
                 ]
