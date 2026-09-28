@@ -215,7 +215,6 @@ def bereken_groeitijd(df_input, min_temp, max_temp):
         if not sunrise_dt or not sunset_dt:
             continue
 
-        # Vorige zonsondergang voor nachtanalyse (vanaf avond tot ochtend)
         prev_sunset_dt = sunset_dt - pd.Timedelta(days=1)
 
         df_dag = df_temp_only[
@@ -231,7 +230,6 @@ def bereken_groeitijd(df_input, min_temp, max_temp):
         if df_dag.empty and df_nacht.empty:
             continue
 
-        # 1. Overdag groeitijd (gebaseerd op 15-minuten meetblokken)
         dag_blokken = {}
         if not df_dag.empty:
             for loc in df_dag["Locatie"].unique():
@@ -243,10 +241,8 @@ def bereken_groeitijd(df_input, min_temp, max_temp):
                 is_optimal = (sub_df["Waarde"] >= min_temp) & (
                     sub_df["Waarde"] <= max_temp
                 )
-                # Elk meetpunt vertegenwoordigt een 15-minuten blok
                 dag_blokken[loc] = int(is_optimal.sum())
 
-        # 2. Nachtelijke warmteanalyse (tussen zonsondergang en zonsopgang)
         nacht_temperaturen = {}
         if not df_nacht.empty:
             for loc in df_nacht["Locatie"].unique():
@@ -254,7 +250,6 @@ def bereken_groeitijd(df_input, min_temp, max_temp):
                 if not sub_nacht.empty:
                     nacht_temperaturen[loc] = sub_nacht
 
-        # Bepaal onverwarmde baseline locaties
         niet_verwarmde_locs = [
             loc
             for loc in list(dag_blokken.keys())
@@ -264,7 +259,7 @@ def bereken_groeitijd(df_input, min_temp, max_temp):
 
         baseline_dag_blokken = 0.0
         if niet_verwarmde_locs and dag_blokken:
-             geldig_niet_verwarmd_dag = [
+            geldig_niet_verwarmd_dag = [
                 dag_blokken[loc]
                 for loc in niet_verwarmde_locs
                 if loc in dag_blokken
@@ -274,7 +269,6 @@ def bereken_groeitijd(df_input, min_temp, max_temp):
                     geldig_niet_verwarmd_dag
                 )
 
-        # Alle unieke locaties verzamelen
         alle_locs = set(list(dag_blokken.keys()) + list(nacht_temperaturen.keys()))
 
         for loc in sorted(alle_locs):
@@ -282,7 +276,7 @@ def bereken_groeitijd(df_input, min_temp, max_temp):
             verwarmd_status = "Niet Verwarmd" if is_onverwarmd else "Verwarmd"
 
             v_blokken = dag_blokken.get(loc, 0)
-            v_uren = v_blokken * 0.25  # 15 min = 0.25 uur
+            v_uren = v_blokken * 0.25
 
             baseline_uren = baseline_dag_blokken * 0.25
 
@@ -292,13 +286,12 @@ def bereken_groeitijd(df_input, min_temp, max_temp):
             else:
                 winst_uren = 0.0
 
-            # Bereken nachtelijke meerwaarde (hoeveel 15-minuten blokken warmer dan onverwarmde baseline)
             nacht_warmere_blokken = 0
             if (
                 not is_onverwarmd
                 and loc in nacht_temperaturen
-                and niet_verwarmde_locs
-            > 0:
+                and len(niet_verwarmde_locs) > 0
+            ):
                 ref_loc = niet_verwarmde_locs[0]
                 if ref_loc in nacht_temperaturen:
                     df_loc_nacht = nacht_temperaturen[loc].set_index(
@@ -454,7 +447,7 @@ huidige_partner = st.session_state["ingelogd_partner"]
 st.title(f"🌡️💧 Temperatuur & Vocht Dashboard - {huidige_partner}")
 
 st.sidebar.write(f"👤 Ingelogd als: **{huidige_partner}**")
-if st.sidebar.button("🚪 Uitloggen", use_container_width=True):
+if st.sidebar.button("🚪 Uitloggen", width="stretch"):
     st.session_state["ingelogd_partner"] = None
     st.rerun()
 
@@ -478,7 +471,7 @@ if "Admin" in huidige_partner:
 
     if uploaded_files:
         if st.sidebar.button(
-            f"🔄 Verwerk & update voor {doel_partner}", use_container_width=True
+            f"🔄 Verwerk & update voor {doel_partner}", width="stretch"
         ):
             with st.spinner(f"Data inlezen voor {doel_partner}..."):
                 verwerk_geuploade_bestanden(uploaded_files, doel_partner)
@@ -521,7 +514,7 @@ st.sidebar.write("---")
 st.sidebar.header("📊 Filters & Instellingen")
 
 locaties = sorted(df["Locatie"].unique().tolist())
-with st.sidebar.popover("📍 Locaties kiezen", use_container_width=True):
+with st.sidebar.popover("📍 Locaties kiezen", width="stretch"):
     col_b1, col_b2 = st.columns(2)
     if col_b1.button("Alles", key="btn_all_loc"):
         for loc in locaties:
@@ -552,7 +545,7 @@ st.sidebar.write("---")
 df_weken_sorted = df.sort_values("Week_Sort")
 weken = df_weken_sorted["Week_Label"].unique().tolist()
 
-with st.sidebar.popover("📅 Weken kiezen", use_container_width=True):
+with st.sidebar.popover("📅 Weken kiezen", width="stretch"):
     col_b1, col_b2 = st.columns(2)
     if col_b1.button("Alles", key="btn_all_week"):
         for w in weken:
@@ -577,7 +570,7 @@ st.sidebar.write("---")
 df_temp_week = df[df["Week_Label"].isin(gekozen_weken)]
 beschikbare_datums = sorted(df_temp_week["Datum"].unique().tolist())
 
-with st.sidebar.popover("📆 Datums kiezen", use_container_width=True):
+with st.sidebar.popover("📆 Datums kiezen", width="stretch"):
     col_b1, col_b2 = st.columns(2)
     if col_b1.button("Alles", key="btn_all_datum"):
         for d in beschikbare_datums:
@@ -605,7 +598,7 @@ saved_colors = load_saved_colors()
 kleuren_map = {}
 color_changed = False
 
-with st.sidebar.popover("🎨 Kleuren aanpassen", use_container_width=True):
+with st.sidebar.popover("🎨 Kleuren aanpassen", width="stretch"):
     st.markdown("**Kies een kleur per locatie:**")
     for idx, loc in enumerate(locaties):
         initial_color = saved_colors.get(
@@ -714,7 +707,7 @@ else:
     with col_btn_l:
         st.write("")
         if st.button(
-            "◀️ Terug", use_container_width=True, help="Schuif periode terug"
+            "◀️ Terug", width="stretch", help="Schuif periode terug"
         ):
             new_start = max(min_dt, selected_dt_range[0] - duration)
             new_end = new_start + duration
@@ -736,7 +729,7 @@ else:
     with col_btn_r:
         st.write("")
         if st.button(
-            "Verder ▶️", use_container_width=True, help="Schuif periode verder"
+            "Verder ▶️", width="stretch", help="Schuif periode verder"
         ):
             new_end = min(max_dt, selected_dt_range[1] + duration)
             new_start = new_end - duration
@@ -919,7 +912,7 @@ with col_exp1:
     )
 
 with col_exp2:
-    if st.button("🔄 Bereken Analyse", use_container_width=True):
+    if st.button("🔄 Bereken Analyse", width="stretch"):
         st.session_state["run_groeitijd"] = True
 
     if st.session_state.get("run_groeitijd", False):
@@ -931,12 +924,10 @@ with col_exp2:
         if not df_groeitijd.empty:
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine="openpyxl") as writer:
-                # Tabblad 1: De resultaten
                 df_groeitijd.to_excel(
                     writer, index=False, sheet_name="Groeitijd_Analyse"
                 )
 
-                # Tabblad 2: Handleiding / Uitleg voor de gebruiker
                 handleiding_data = [
                     [
                         "ONDERWERP",
@@ -999,7 +990,7 @@ with col_exp2:
                 data=output.getvalue(),
                 file_name="Groeitijd_Analyse.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True,
+                width="stretch",
             )
         else:
             st.warning("Geen geschikte temperatuurdata gevonden.")
@@ -1009,4 +1000,4 @@ with col_exp2:
 # ==================================================
 
 with st.expander("Ruwe data bekijken (van actieve slider-selectie)"):
-    st.dataframe(df_slider_filtered, use_container_width=True)
+    st.dataframe(df_slider_filtered, width="stretch")
