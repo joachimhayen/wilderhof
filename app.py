@@ -214,16 +214,18 @@ def bereken_groeitijd(df_input, min_temp, max_temp):
         if not sunrise_dt or not sunset_dt:
             continue
 
-        # Vorige zonsondergang tot de zonsopgang van deze dag (Nachtperiode)
+        # Exacte nachtperiode van vorige zonsondergang tot huidige zonsopgang
         prev_sunset_dt, _ = get_sun_times(d - datetime.timedelta(days=1))
         if not prev_sunset_dt:
-            prev_sunset_dt = sunset_dt - pd.Timedelta(hours=14)
+            prev_sunset_dt = sunrise_dt - pd.Timedelta(hours=12)
 
+        # Filter streng voor overdag (tussen zonsopgang en zonsondergang)
         df_dag = df_temp_only[
             (df_temp_only["DatumTijd"] >= sunrise_dt)
             & (df_temp_only["DatumTijd"] <= sunset_dt)
         ]
 
+        # Filter streng voor 's nachts (tussen vorige zonsondergang en huidige zonsopgang)
         df_nacht = df_temp_only[
             (df_temp_only["DatumTijd"] >= prev_sunset_dt)
             & (df_temp_only["DatumTijd"] <= sunrise_dt)
@@ -262,8 +264,9 @@ def bereken_groeitijd(df_input, min_temp, max_temp):
                     geldig_niet_verwarmd_dag
                 )
 
-        # 2. Nachtelijke warmteanalyse (robuuste vergelijking op basis van 15-minuten tijdslots)
+        # 2. Nachtelijke warmteanalyse met strenge tijdslot-matching en maximumgrens
         nacht_warmere_blokken_dict = {}
+        totaal_nacht_slots = 0
         if not df_nacht.empty and niet_verwarmde_locs:
             ref_loc = niet_verwarmde_locs[0]
             df_ref_nacht = df_nacht[df_nacht["Locatie"] == ref_loc].copy()
@@ -273,6 +276,7 @@ def bereken_groeitijd(df_input, min_temp, max_temp):
                     "15min"
                 )
                 ref_map = df_ref_nacht.set_index("Slot")["Waarde"].to_dict()
+                totaal_nacht_slots = len(ref_map)
 
                 for loc in df_nacht["Locatie"].unique():
                     if str(loc).upper().startswith("NIET VERWARMD"):
@@ -289,6 +293,11 @@ def bereken_groeitijd(df_input, min_temp, max_temp):
                             val_ref = ref_map[slot]
                             if val_loc > val_ref:
                                 warmere_telling += 1
+
+                    if totaal_nacht_slots > 0:
+                        warmere_telling = min(
+                            warmere_telling, totaal_nacht_slots
+                        )
 
                     nacht_warmere_blokken_dict[loc] = warmere_telling
 
