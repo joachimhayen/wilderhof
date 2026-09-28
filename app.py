@@ -114,6 +114,7 @@ def get_sun_times(date_obj, lat=50.85, lon=5.35):
     results = {}
 
     for is_sunrise in [True, False]:
+        # Correcte geschatte aanvangstijd: 6h voor zonsopgang, 18h voor zonsondergang
         t_approx = (
             day_of_year + ((6.0 if is_sunrise else 18.0) - lng_hour) / 24.0
         )
@@ -146,15 +147,21 @@ def get_sun_times(date_obj, lat=50.85, lon=5.35):
         if cos_H > 1 or cos_H < -1:
             continue
 
-        H = (
-            360.0 - math.degrees(math.acos(cos_H))
-            if is_sunrise
-            else math.degrees(math.acos(cos_H))
-        )
+        if is_sunrise:
+            H = 360.0 - math.degrees(math.acos(cos_H))
+        else:
+            H = math.degrees(math.acos(cos_H))
+
         H = H / 15.0
 
         T = H + RA - (0.06571 * t_approx) - 6.622
         UT = (T - lng_hour) % 24.0
+
+        # Voor zonsondergang moeten we zorgen dat UT in de avond valt (> 12 uur)
+        if not is_sunrise and UT < 12.0:
+            UT = (UT + 12.0) % 24.0
+            if UT < 12.0:
+                UT += 12.0
 
         hours = int(UT)
         minutes = int((UT - hours) * 60)
@@ -214,18 +221,18 @@ def bereken_groeitijd(df_input, min_temp, max_temp):
         if not sunrise_dt or not sunset_dt:
             continue
 
-        # Exacte nachtperiode van vorige zonsondergang tot huidige zonsopgang
-        prev_sunset_dt, _ = get_sun_times(d - datetime.timedelta(days=1))
+        # Vorige zonsondergang (avond gisteren)
+        _, prev_sunset_dt = get_sun_times(d - datetime.timedelta(days=1))
         if not prev_sunset_dt:
-            prev_sunset_dt = sunrise_dt - pd.Timedelta(hours=12)
+            prev_sunset_dt = sunrise_dt - pd.Timedelta(hours=14)
 
-        # Filter streng voor overdag (tussen zonsopgang en zonsondergang)
+        # Filter streng voor overdag (tussen zonsopgang en zonsondergang van vandaag)
         df_dag = df_temp_only[
             (df_temp_only["DatumTijd"] >= sunrise_dt)
             & (df_temp_only["DatumTijd"] <= sunset_dt)
         ]
 
-        # Filter streng voor 's nachts (tussen vorige zonsondergang en huidige zonsopgang)
+        # Filter streng voor 's nachts (tussen zonsondergang gisterenavond en zonsopgang vanochtend)
         df_nacht = df_temp_only[
             (df_temp_only["DatumTijd"] >= prev_sunset_dt)
             & (df_temp_only["DatumTijd"] <= sunrise_dt)
