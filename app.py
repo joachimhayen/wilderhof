@@ -181,7 +181,7 @@ def get_sun_times(date_obj, lat=50.85, lon=5.35):
 
 
 # ==================================================
-# BEREKENING GROEITIJD ANALYSE
+# BEREKENING GROEITIJD & NACHTELIJKE WARMTE ANALYSE
 # ==================================================
 
 
@@ -215,67 +215,122 @@ def bereken_groeitijd(df_input, min_temp, max_temp):
         if not sunrise_dt or not sunset_dt:
             continue
 
+        # Vorige zonsondergang voor nachtanalyse (vanaf avond tot ochtend)
+        prev_sunset_dt = sunset_dt - pd.Timedelta(days=1)
+
         df_dag = df_temp_only[
             (df_temp_only["DatumTijd"] >= sunrise_dt)
             & (df_temp_only["DatumTijd"] <= sunset_dt)
         ]
 
-        if df_dag.empty:
+        df_nacht = df_temp_only[
+            (df_temp_only["DatumTijd"] >= prev_sunset_dt)
+            & (df_temp_only["DatumTijd"] <= sunrise_dt)
+        ]
+
+        if df_dag.empty and df_nacht.empty:
             continue
 
-        dag_groeiminuten = {}
+        # 1. Overdag groeitijd (gebaseerd op 15-minuten meetblokken)
+        dag_blokken = {}
+        if not df_dag.empty:
+            for loc in df_dag["Locatie"].unique():
+                sub_df = df_dag[df_dag["Locatie"] == loc].sort_values(
+                    "DatumTijd"
+                )
+                if sub_df.empty:
+                    continue
+                is_optimal = (sub_df["Waarde"] >= min_temp) & (
+                    sub_df["Waarde"] <= max_temp
+                )
+                # Elk meetpunt vertegenwoordigt een 15-minuten blok
+                dag_blokken[loc] = int(is_optimal.sum())
 
-        for loc in df_dag["Locatie"].unique():
-            sub_df = df_dag[df_dag["Locatie"] == loc].sort_values("DatumTijd")
-            if len(sub_df) < 2:
-                continue
+        # 2. Nachtelijke warmteanalyse (tussen zonsondergang en zonsopgang)
+        nacht_temperaturen = {}
+        if not df_nacht.empty:
+            for loc in df_nacht["Locatie"].unique():
+                sub_nacht = df_nacht[df_nacht["Locatie"] == loc]
+                if not sub_nacht.empty:
+                    nacht_temperaturen[loc] = sub_nacht
 
-            sub_df = sub_df.drop_duplicates(subset=["DatumTijd"]).set_index(
-                "DatumTijd"
-            )
-            resampled = (
-                sub_df["Waarde"].resample("1min").interpolate(method="time")
-            )
-
-            is_optimal = (resampled >= min_temp) & (resampled <= max_temp)
-            dag_groeiminuten[loc] = is_optimal.sum()
-
-        if not dag_groeiminuten:
-            continue
-
+        # Bepaal onverwarmde baseline locaties
         niet_verwarmde_locs = [
             loc
-            for loc in dag_groeiminuten.keys()
+            for loc in list(dag_blokken.keys())
+            + list(nacht_temperaturen.keys())
             if str(loc).upper().startswith("NIET VERWARMD")
         ]
 
-        if niet_verwarmde_locs:
-            baseline_minuten = sum(
-                dag_groeiminuten[loc] for loc in niet_verwarmde_locs
-            ) / len(niet_verwarmde_locs)
-        else:
-            baseline_minuten = 0.0
+        baseline_dag_blokken = 0.0
+        if niet_verwarmde_locs and dag_blokken:
+             geldig_niet_verwarmd_dag = [
+                dag_blokken[loc]
+                for loc in niet_verwarmde_locs
+                if loc in dag_blokken
+            ]
+            if geldig_niet_verwarmd_dag:
+                baseline_dag_blokken = sum(geldig_niet_verwarmd_dag) / len(
+                    geldig_niet_verwarmd_dag
+                )
 
-        for loc, v_minuten in dag_groeiminuten.items():
+        # Alle unieke locaties verzamelen
+        alle_locs = set(list(dag_blokken.keys()) + list(nacht_temperaturen.keys()))
+
+        for loc in sorted(alle_locs):
             is_onverwarmd = str(loc).upper().startswith("NIET VERWARMD")
             verwarmd_status = "Niet Verwarmd" if is_onverwarmd else "Verwarmd"
 
-            if verwarmd_status == "Verwarmd" and baseline_minuten > 0:
-                winst_minuten = max(0.0, v_minuten - baseline_minuten)
+            v_blokken = dag_blokken.get(loc, 0)
+            v_uren = v_blokken * 0.25  # 15 min = 0.25 uur
+
+            baseline_uren = baseline_dag_blokken * 0.25
+
+            if verwarmd_status == "Verwarmd" and baseline_dag_blokken > 0:
+                winst_blokken = max(0, v_blokken - baseline_dag_blokken)
+                winst_uren = winst_blokken * 0.25
             else:
-                winst_minuten = 0.0
+                winst_uren = 0.0
+
+            # Bereken nachtelijke meerwaarde (hoeveel 15-minuten blokken warmer dan onverwarmde baseline)
+            nacht_warmere_blokken = 0
+            if (
+                not is_onverwarmd
+                and loc in nacht_temperaturen
+                and niet_verwarmde_locs
+            > 0:
+                ref_loc = niet_verwarmde_locs[0]
+                if ref_loc in nacht_temperaturen:
+                    df_loc_nacht = nacht_temperaturen[loc].set_index(
+                        "DatumTijd"
+                    )["Waarde"]
+                    df_ref_nacht = nacht_temperaturen[ref_loc].set_index(
+                        "DatumTijd"
+                    )["Waarde"]
+                    common_index = df_loc_nacht.index.intersection(
+                        df_ref_nacht.index
+                    )
+                    if not common_index.empty:
+                        verschil = (
+                            df_loc_nacht.loc[common_index]
+                            - df_ref_nacht.loc[common_index]
+                        )
+                        nacht_warmere_blokken = int((verschil > 0).sum())
+
+            nacht_warmere_uren = nacht_warmere_blokken * 0.25
 
             results.append({
                 "Datum": d.strftime("%d/%m/%Y"),
                 "Locatie": loc,
                 "Type Locatie": verwarmd_status,
-                "Groeitijd Locatie (min)": round(v_minuten, 1),
-                "Groeitijd Locatie (uur)": round(v_minuten / 60.0, 2),
-                "Baseline Niet-Verwarmd Gem. (min)": round(
-                    baseline_minuten, 1
+                "Groeitijd Locatie (15-min blokken)": v_blokken,
+                "Groeitijd Locatie (uren)": round(v_uren, 2),
+                "Baseline Niet-Verwarmd (uren)": round(baseline_uren, 2),
+                "Extra Groeitijd Overdag (uren)": round(winst_uren, 2),
+                "Nachtelijke Warmere Blokken": nacht_warmere_blokken,
+                "Nachtelijke Warmte-extra (uren)": round(
+                    nacht_warmere_uren, 2
                 ),
-                "Extra Groeitijd (minuten)": round(winst_minuten, 1),
-                "Extra Groeitijd (uren)": round(winst_minuten / 60.0, 2),
             })
 
     return pd.DataFrame(results)
@@ -344,7 +399,7 @@ def verwerk_geuploade_bestanden(uploaded_files, doel_partner):
         except Exception as e:
             st.warning(f"Fout bij verwerken van {f.name}: {e}")
 
-    if not nuove_dfs if "nieuwe_dfs" not in locals() else not nieuwe_dfs:
+    if not nieuwe_dfs:
         return historie_df
 
     df_nieuw = pd.concat(nieuwe_dfs, ignore_index=True)
@@ -406,7 +461,6 @@ if st.sidebar.button("🚪 Uitloggen", use_container_width=True):
 st.sidebar.write("---")
 st.sidebar.header("📂 Databron Beheer")
 
-# Bepaal welke partner getoond/beheerd wordt
 actieve_bekijk_partner = huidige_partner
 
 if "Admin" in huidige_partner:
@@ -438,7 +492,6 @@ else:
         f" **{huidige_partner}**."
     )
 
-# Laad de juiste database op basis van de actieve partner en haal update-tijd op
 actieve_historie_file = get_historie_file_path(actieve_bekijk_partner)
 
 laatste_update_str = "Nog niet beschikbaar"
@@ -451,7 +504,6 @@ if actieve_historie_file.exists():
 else:
     df = pd.DataFrame()
 
-# Duidelijke weergave van het laatste update-tijdstip boven aan de pagina
 st.info(
     f"🕒 **Laatste update van de gegevens:** {laatste_update_str} (voor"
     f" **{actieve_bekijk_partner}**)"
@@ -586,7 +638,6 @@ st.subheader("Temperatuur & Vochtgehalte Verloop")
 if df_filtered.empty:
     st.info("Geen data beschikbaar voor de gekozen filters.")
 else:
-    # 1. Inklapbaar menu voor Y-as Instellingen (standaard dicht)
     with st.expander("📊 Y-as Instellingen", expanded=False):
         df_temp_base = df_filtered[df_filtered["Type"] == "Temperatuur"]
         min_temp_default = (
@@ -622,7 +673,6 @@ else:
                 "Y-as Vocht Max (%)", value=100.0, step=5.0
             )
 
-    # 2. Inklapbaar menu voor Grenzen & Weergave (standaard dicht)
     with st.expander("⚙️ Grenzen & Weergave", expanded=False):
         col_ctrl1, col_ctrl2, col_ctrl3 = st.columns(3)
 
@@ -856,24 +906,24 @@ else:
 # ==================================================
 
 st.write("---")
-st.subheader("🌱 Groeitijd Winst Analyse")
+st.subheader("🌱 Groeitijd & Nachtwarmte Analyse")
 
 col_exp1, col_exp2 = st.columns([2, 1])
 
 with col_exp1:
     st.write(
-        "Bereken de groeitijd per locatie tussen zonsopgang en zonsondergang."
+        "Bereken de effectieve groeitijd (op basis van werkelijke 15-minuten dataloggerblokken) en de nachtelijke warmtewinst."
     )
     st.caption(
         f"Criteria: Temperatuur tussen **{grens_waarde}°C** en **{stress_waarde}°C** (binnen het geselecteerde slider-bereik)."
     )
 
 with col_exp2:
-    if st.button("🔄 Bereken Groeitijd Analyse", use_container_width=True):
+    if st.button("🔄 Bereken Analyse", use_container_width=True):
         st.session_state["run_groeitijd"] = True
 
     if st.session_state.get("run_groeitijd", False):
-        with st.spinner("Groeitijden berekenen..."):
+        with st.spinner("Analyseren van meetblokken en nachtdata..."):
             df_groeitijd = bereken_groeitijd(
                 df_slider_filtered, grens_waarde, stress_waarde
             )
@@ -881,12 +931,71 @@ with col_exp2:
         if not df_groeitijd.empty:
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine="openpyxl") as writer:
+                # Tabblad 1: De resultaten
                 df_groeitijd.to_excel(
                     writer, index=False, sheet_name="Groeitijd_Analyse"
                 )
 
+                # Tabblad 2: Handleiding / Uitleg voor de gebruiker
+                handleiding_data = [
+                    [
+                        "ONDERWERP",
+                        "UITLEG & INTERPRETATIE VOOR DE GEBRUIKER",
+                    ],
+                    [
+                        "Doel van dit overzicht",
+                        (
+                            "Dit document brengt in kaart hoeveel extra"
+                            " warmte en groeitijd de biomeiler oplevert in de"
+                            " serre ten opzichte van de onverwarmde"
+                            " referentierijen."
+                        ),
+                    ],
+                    [
+                        "Basis van de berekening",
+                        (
+                            "De analyse is gebaseerd op de werkelijke"
+                            " 15-minuten meetblokken van de dataloggers (zonder"
+                            " kunstmatige interpolatie)."
+                        ),
+                    ],
+                    [
+                        "Groeitemperatuur venster",
+                        (
+                            f"Een 15-minuten blok telt mee voor de groeitijd als"
+                            f" de temperatuur zich bevindt tussen de"
+                            f" ingestelde groeigrens ({grens_waarde}°C) en"
+                            f" stressgrens ({stress_waarde}°C)."
+                        ),
+                    ],
+                    [
+                        "Extra Groeitijd Overdag (uren)",
+                        (
+                            "Het aantal uren dat een verwarmde rij overdag"
+                            " meer binnen het optimale groeivenster valt dan"
+                            " de gemiddelde niet-verwarmde referentierij."
+                        ),
+                    ],
+                    [
+                        "Nachtelijke Warmte-extra (uren)",
+                        (
+                            "Het aantal uren (in blokken van 15 minuten)"
+                            " tussen zonsondergang en zonsopgang waarin de"
+                            " verwarmde rij effectief warmer is dan de"
+                            " onverwarmde referentie. Dit toont de"
+                            " bufferwerking tegen nachtelijke afkoeling."
+                        ),
+                    ],
+                ]
+                df_handleiding = pd.DataFrame(
+                    handleiding_data[1:], columns=handleiding_data[0]
+                )
+                df_handleiding.to_excel(
+                    writer, index=False, sheet_name="Handleiding & Uitleg"
+                )
+
             st.download_button(
-                label="📊 Download Excel Bestand",
+                label="📊 Download Excel Bestand (incl. Handleiding)",
                 data=output.getvalue(),
                 file_name="Groeitijd_Analyse.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
