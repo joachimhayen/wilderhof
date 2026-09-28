@@ -195,16 +195,6 @@ def bereken_groeitijd(df_input, min_temp, max_temp):
     if df_temp_only.empty:
         return pd.DataFrame()
 
-    ongewenste_termen = ["biomeiler", "buiten"]
-    df_temp_only = df_temp_only[
-        ~df_temp_only["Locatie"]
-        .str.lower()
-        .str.contains("|".join(ongewenste_termen))
-    ]
-
-    if df_temp_only.empty:
-        return pd.DataFrame()
-
     df_temp_only["DatumTijd"] = pd.to_datetime(df_temp_only["DatumTijd"])
     if df_temp_only["DatumTijd"].dt.tz is not None:
         df_temp_only["DatumTijd"] = df_temp_only["DatumTijd"].dt.tz_localize(
@@ -236,10 +226,14 @@ def bereken_groeitijd(df_input, min_temp, max_temp):
         if df_dag.empty and df_nacht.empty:
             continue
 
-        # 1. Overdag groeitijd (15-minuten blokken)
+        # 1. Overdag groeitijd (15-minuten blokken) - sluit 'buiten' en 'biomeiler' uit voor de vergelijking
         dag_blokken = {}
         if not df_dag.empty:
             for loc in df_dag["Locatie"].unique():
+                if any(
+                    term in str(loc).lower() for term in ["biomeiler", "buiten"]
+                ):
+                    continue
                 sub_df = df_dag[df_dag["Locatie"] == loc]
                 if sub_df.empty:
                     continue
@@ -266,7 +260,7 @@ def bereken_groeitijd(df_input, min_temp, max_temp):
                     geldig_niet_verwarmd_dag
                 )
 
-        # 2. Nachtelijke warmteanalyse (uitsluitend positieve verschillen meetellen)
+        # 2. Nachtelijke warmteanalyse (uitsluitend serrelocaties, geen buiten/biomeiler)
         nacht_warmere_blokken_dict = {}
         nacht_gem_verschil_dict = {}
         totaal_nacht_slots = 0
@@ -283,6 +277,11 @@ def bereken_groeitijd(df_input, min_temp, max_temp):
                 totaal_nacht_slots = len(ref_map)
 
                 for loc in df_nacht["Locatie"].unique():
+                    if any(
+                        term in str(loc).lower()
+                        for term in ["biomeiler", "buiten"]
+                    ):
+                        continue
                     if str(loc).upper().startswith("NIET VERWARMD"):
                         nacht_warmere_blokken_dict[loc] = 0
                         nacht_gem_verschil_dict[loc] = 0.0
@@ -320,7 +319,17 @@ def bereken_groeitijd(df_input, min_temp, max_temp):
 
         alle_locs = set(
             list(dag_blokken.keys())
-            + list(df_nacht["Locatie"].unique() if not df_nacht.empty else [])
+            + list(
+                [
+                    l
+                    for l in df_nacht["Locatie"].unique()
+                    if not any(
+                        t in str(l).lower() for t in ["biomeiler", "buiten"]
+                    )
+                ]
+                if not df_nacht.empty
+                else []
+            )
         )
 
         for loc in sorted(alle_locs):
