@@ -226,7 +226,6 @@ def bereken_groeitijd(df_input, min_temp, max_temp):
         if df_dag.empty and df_nacht.empty:
             continue
 
-        # 1. Overdag groeitijd (15-minuten blokken) - sluit 'buiten' en 'biomeiler' uit voor de vergelijking
         dag_blokken = {}
         if not df_dag.empty:
             for loc in df_dag["Locatie"].unique():
@@ -260,7 +259,6 @@ def bereken_groeitijd(df_input, min_temp, max_temp):
                     geldig_niet_verwarmd_dag
                 )
 
-        # 2. Nachtelijke warmteanalyse (uitsluitend serrelocaties, geen buiten/biomeiler)
         nacht_warmere_blokken_dict = {}
         nacht_gem_verschil_dict = {}
         totaal_nacht_slots = 0
@@ -369,21 +367,22 @@ def bereken_groeitijd(df_input, min_temp, max_temp):
 
 
 # ==================================================
-# FUNCTIE VOOR INLEZEN GEÜPLOADDE BESTANDEN
+# FUNCTIE VOOR INLEZEN GEÜPLOADDE BESTANDEN (FLEXIBEL)
 # ==================================================
 
 
 def verwerk_geuploade_bestanden(uploaded_files, doel_partner):
     target_file = get_historie_file_path(doel_partner)
-    historie_df = pd.DataFrame()
+
+    # Verwijder het oude parquet-bestand zodat we altijd vers starten
     if target_file.exists():
         try:
-            historie_df = pd.read_parquet(target_file)
+            target_file.unlink()
         except Exception:
             pass
 
     if not uploaded_files:
-        return historie_df
+        return pd.DataFrame()
 
     nieuwe_dfs = []
     for f in uploaded_files:
@@ -395,55 +394,58 @@ def verwerk_geuploade_bestanden(uploaded_files, doel_partner):
 
         try:
             xls = pd.ExcelFile(f)
-            sheet_to_read = "Devices" if "Devices" in xls.sheet_names else 0
+            sheet_to_read = (
+                "Devices" if "Devices" in xls.sheet_names else xls.sheet_names[0]
+            )
             df_raw = pd.read_excel(f, sheet_name=sheet_to_read, header=None)
 
-            if sheet_to_read == "Devices" or (
-                len(df_raw) > 3 and "tijdstempel" in str(df_raw.iloc[3, 0]).lower()
-            ):
-                data_df = df_raw.iloc[4:].copy()
-                data_df.columns = ["DatumTijd", "Waarde"]
-                data_df["DatumTijd"] = pd.to_datetime(
-                    data_df["DatumTijd"], errors="coerce"
-                )
+            # Zoek dynamisch naar de header rij met tijdstempel of datum
+            header_row = 0
+            for idx, row in df_raw.head(10).iterrows():
+                row_str = str(row.values).lower()
+                if (
+                    "tijdstempel" in row_str
+                    or "datum" in row_str
+                    or "timestamp" in row_str
+                ):
+                    header_row = idx
+                    break
 
-                def clean_val(val):
-                    if pd.isna(val):
-                        return None
-                    if isinstance(val, (int, float)):
-                        return float(val)
-                    m = re.search(r"[-+]?\d*\.\d+|\d+", str(val))
-                    return float(m.group()) if m else None
+            data_df = df_raw.iloc[header_row + 1 :].copy()
+            data_df = data_df.iloc[:, :2]
+            data_df.columns = ["DatumTijd", "Waarde"]
+            data_df["DatumTijd"] = pd.to_datetime(
+                data_df["DatumTijd"], errors="coerce"
+            )
 
-                data_df["Waarde"] = data_df["Waarde"].apply(clean_val)
-                data_df = data_df.dropna(subset=["DatumTijd", "Waarde"])
+            def clean_val(val):
+                if pd.isna(val):
+                    return None
+                if isinstance(val, (int, float)):
+                    return float(val)
+                m = re.search(r"[-+]?\d*\.\d+|\d+", str(val))
+                return float(m.group()) if m else None
 
-                is_vocht = any(
-                    kw in loc_name.lower()
-                    for kw in ["vocht", "moisture", "humidity", "rv", "%"]
-                )
-                data_df["Locatie"] = loc_name
-                data_df["Type"] = "Vochtgehalte" if is_vocht else "Temperatuur"
+            data_df["Waarde"] = data_df["Waarde"].apply(clean_val)
+            data_df = data_df.dropna(subset=["DatumTijd", "Waarde"])
 
-                nieuwe_dfs.append(
-                    data_df[["DatumTijd", "Waarde", "Locatie", "Type"]]
-                )
+            is_vocht = any(
+                kw in loc_name.lower()
+                for kw in ["vocht", "moisture", "humidity", "rv", "%"]
+            )
+            data_df["Locatie"] = loc_name
+            data_df["Type"] = "Vochtgehalte" if is_vocht else "Temperatuur"
+
+            nieuwe_dfs.append(
+                data_df[["DatumTijd", "Waarde", "Locatie", "Type"]]
+            )
         except Exception as e:
             st.warning(f"Fout bij verwerken van {f.name}: {e}")
 
-    if not nieuwe_dfs:
-        return historie_df
+    if not nuove_dfs if "nieuwe_dfs" in locals() else not nieuwe_dfs:
+        return pd.DataFrame()
 
-    df_nieuw = pd.concat(nieuwe_dfs, ignore_index=True)
-
-    if not historie_df.empty:
-        historie_df["DatumTijd"] = pd.to_datetime(historie_df["DatumTijd"])
-        df_gecombineerd = pd.concat(
-            [historie_df, df_nieuw], ignore_index=True
-        )
-    else:
-        df_gecombineerd = df_nieuw
-
+    df_gecombineerd = pd.concat(nieuwe_dfs, ignore_index=True)
     df_gecombineerd = df_gecombineerd.drop_duplicates(
         subset=["DatumTijd", "Locatie"], keep="last"
     )
