@@ -76,7 +76,6 @@ if st.session_state["ingelogd_partner"] is None:
     st.stop()
 
 
-# Functie om het juiste losse databasebestand per partner op te halen in de centrale map
 def get_historie_file_path(partner_naam):
     if "Wilderhof" in partner_naam:
         return Path("historie_database_wilderhof.parquet")
@@ -181,7 +180,7 @@ def get_sun_times(date_obj, lat=50.85, lon=5.35):
 
 
 # ==================================================
-# BEREKENING GROEITIJD & NACHTELIJKE WARMTE ANALYSE
+# BEREKENING GROEITIJD & ROBUUSTE NACHTELIJKE WARMTE ANALYSE
 # ==================================================
 
 
@@ -215,7 +214,10 @@ def bereken_groeitijd(df_input, min_temp, max_temp):
         if not sunrise_dt or not sunset_dt:
             continue
 
-        prev_sunset_dt = sunset_dt - pd.Timedelta(days=1)
+        # Vorige zonsondergang tot de zonsopgang van deze dag (Nachtperiode)
+        prev_sunset_dt, _ = get_sun_times(d - datetime.timedelta(days=1))
+        if not prev_sunset_dt:
+            prev_sunset_dt = sunset_dt - pd.Timedelta(hours=14)
 
         df_dag = df_temp_only[
             (df_temp_only["DatumTijd"] >= sunrise_dt)
@@ -230,12 +232,11 @@ def bereken_groeitijd(df_input, min_temp, max_temp):
         if df_dag.empty and df_nacht.empty:
             continue
 
+        # 1. Overdag groeitijd (15-minuten blokken)
         dag_blokken = {}
         if not df_dag.empty:
             for loc in df_dag["Locatie"].unique():
-                sub_df = df_dag[df_dag["Locatie"] == loc].sort_values(
-                    "DatumTijd"
-                )
+                sub_df = df_dag[df_dag["Locatie"] == loc]
                 if sub_df.empty:
                     continue
                 is_optimal = (sub_df["Waarde"] >= min_temp) & (
@@ -243,17 +244,9 @@ def bereken_groeitijd(df_input, min_temp, max_temp):
                 )
                 dag_blokken[loc] = int(is_optimal.sum())
 
-        nacht_temperaturen = {}
-        if not df_nacht.empty:
-            for loc in df_nacht["Locatie"].unique():
-                sub_nacht = df_nacht[df_nacht["Locatie"] == loc]
-                if not sub_nacht.empty:
-                    nacht_temperaturen[loc] = sub_nacht
-
         niet_verwarmde_locs = [
             loc
-            for loc in list(dag_blokken.keys())
-            + list(nacht_temperaturen.keys())
+            for loc in df_temp_only["Locatie"].unique()
             if str(loc).upper().startswith("NIET VERWARMD")
         ]
 
@@ -269,7 +262,40 @@ def bereken_groeitijd(df_input, min_temp, max_temp):
                     geldig_niet_verwarmd_dag
                 )
 
-        alle_locs = set(list(dag_blokken.keys()) + list(nacht_temperaturen.keys()))
+        # 2. Nachtelijke warmteanalyse (robuuste vergelijking op basis van 15-minuten tijdslots)
+        nacht_warmere_blokken_dict = {}
+        if not df_nacht.empty and niet_verwarmde_locs:
+            ref_loc = niet_verwarmde_locs[0]
+            df_ref_nacht = df_nacht[df_nacht["Locatie"] == ref_loc].copy()
+
+            if not df_ref_nacht.empty:
+                df_ref_nacht["Slot"] = df_ref_nacht["DatumTijd"].dt.floor(
+                    "15min"
+                )
+                ref_map = df_ref_nacht.set_index("Slot")["Waarde"].to_dict()
+
+                for loc in df_nacht["Locatie"].unique():
+                    if str(loc).upper().startswith("NIET VERWARMD"):
+                        nacht_warmere_blokken_dict[loc] = 0
+                        continue
+
+                    sub_loc = df_nacht[df_nacht["Locatie"] == loc].copy()
+                    sub_loc["Slot"] = sub_loc["DatumTijd"].dt.floor("15min")
+                    loc_map = sub_loc.set_index("Slot")["Waarde"].to_dict()
+
+                    warmere_telling = 0
+                    for slot, val_loc in loc_map.items():
+                        if slot in ref_map:
+                            val_ref = ref_map[slot]
+                            if val_loc > val_ref:
+                                warmere_telling += 1
+
+                    nacht_warmere_blokken_dict[loc] = warmere_telling
+
+        alle_locs = set(
+            list(dag_blokken.keys())
+            + list(df_nacht["Locatie"].unique() if not df_nacht.empty else [])
+        )
 
         for loc in sorted(alle_locs):
             is_onverwarmd = str(loc).upper().startswith("NIET VERWARMD")
@@ -277,7 +303,6 @@ def bereken_groeitijd(df_input, min_temp, max_temp):
 
             v_blokken = dag_blokken.get(loc, 0)
             v_uren = v_blokken * 0.25
-
             baseline_uren = baseline_dag_blokken * 0.25
 
             if verwarmd_status == "Verwarmd" and baseline_dag_blokken > 0:
@@ -286,30 +311,7 @@ def bereken_groeitijd(df_input, min_temp, max_temp):
             else:
                 winst_uren = 0.0
 
-            nacht_warmere_blokken = 0
-            if (
-                not is_onverwarmd
-                and loc in nacht_temperaturen
-                and len(niet_verwarmde_locs) > 0
-            ):
-                ref_loc = niet_verwarmde_locs[0]
-                if ref_loc in nacht_temperaturen:
-                    df_loc_nacht = nacht_temperaturen[loc].set_index(
-                        "DatumTijd"
-                    )["Waarde"]
-                    df_ref_nacht = nacht_temperaturen[ref_loc].set_index(
-                        "DatumTijd"
-                    )["Waarde"]
-                    common_index = df_loc_nacht.index.intersection(
-                        df_ref_nacht.index
-                    )
-                    if not common_index.empty:
-                        verschil = (
-                            df_loc_nacht.loc[common_index]
-                            - df_ref_nacht.loc[common_index]
-                        )
-                        nacht_warmere_blokken = int((verschil > 0).sum())
-
+            nacht_warmere_blokken = nacht_warmere_blokken_dict.get(loc, 0)
             nacht_warmere_uren = nacht_warmere_blokken * 0.25
 
             results.append({
