@@ -442,7 +442,7 @@ def verwerk_geuploade_bestanden(uploaded_files, doel_partner):
         except Exception as e:
             st.warning(f"Fout bij verwerken van {f.name}: {e}")
 
-    if not nuove_dfs if "nieuwe_dfs" in locals() else not nieuwe_dfs:
+    if not nieuwe_dfs:
         return pd.DataFrame()
 
     df_gecombineerd = pd.concat(nieuwe_dfs, ignore_index=True)
