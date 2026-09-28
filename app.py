@@ -849,7 +849,7 @@ else:
         autoshift=False,
     )
 
-    st.plotly_chart(fig, use_container_width=True, config={"scrollZoom": True})
+    st.plotly_chart(fig, width="stretch", config={"scrollZoom": True})
 
 # ==================================================
 # GROEITIJD EXPORT SECTIE (EXCEL)
