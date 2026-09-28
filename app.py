@@ -185,7 +185,7 @@ def get_sun_times(date_obj, lat=50.85, lon=5.35):
 
 
 # ==================================================
-# BEREKENING GROEITIJD & ROBUUSTE NACHTELIJKE WARMTE ANALYSE
+# BEREKENING GROEITIJD & ROBUUSTE NACHTELIJKE WARMTE ANALYSE (> 1°C)
 # ==================================================
 
 
@@ -295,7 +295,8 @@ def bereken_groeitijd(df_input, min_temp, max_temp):
                         if slot in ref_map:
                             val_ref = ref_map[slot]
                             diff = val_loc - val_ref
-                            if diff > 0:
+                            # STRIKTE VOORWAARDE: Verschil moet groter zijn dan 1.0°C
+                            if diff > 1.0:
                                 warmere_telling += 1
                                 positieve_verschillen.append(diff)
 
@@ -374,7 +375,6 @@ def bereken_groeitijd(df_input, min_temp, max_temp):
 def verwerk_geuploade_bestanden(uploaded_files, doel_partner):
     target_file = get_historie_file_path(doel_partner)
 
-    # Verwijder het oude parquet-bestand zodat we altijd vers starten
     if target_file.exists():
         try:
             target_file.unlink()
@@ -399,7 +399,6 @@ def verwerk_geuploade_bestanden(uploaded_files, doel_partner):
             )
             df_raw = pd.read_excel(f, sheet_name=sheet_to_read, header=None)
 
-            # Zoek dynamisch naar de header rij met tijdstempel of datum
             header_row = 0
             for idx, row in df_raw.head(10).iterrows():
                 row_str = str(row.values).lower()
@@ -949,7 +948,7 @@ with col_exp1:
         "Bereken de effectieve groeitijd (op basis van werkelijke 15-minuten dataloggerblokken) en de nachtelijke warmtewinst."
     )
     st.caption(
-        f"Criteria: Temperatuur tussen **{grens_waarde}°C** en **{stress_waarde}°C** (binnen het geselecteerde slider-bereik)."
+        f"Criteria: Temperatuur tussen **{grens_waarde}°C** en **{stress_waarde}°C** (binnen het geselecteerde slider-bereik). Nachtelijke warmtewinst vereist een verschil van **> 1°C** ten opzichte van onverwarmd."
     )
 
 with col_exp2:
@@ -957,7 +956,7 @@ with col_exp2:
         st.session_state["run_groeitijd"] = True
 
     if st.session_state.get("run_groeitijd", False):
-        with st.spinner("Analyseren van meetblokken en nachtdata..."):
+        with st.spinner("Analyseren van meetblokken en nachtdata (> 1°C)..."):
             df_groeitijd = bereken_groeitijd(
                 df_slider_filtered, grens_waarde, stress_waarde
             )
@@ -1014,8 +1013,8 @@ with col_exp2:
                             "Het aantal uren (in blokken van 15 minuten)"
                             " tussen zonsondergang en zonsopgang waarin de"
                             " verwarmde rij effectief warmer is dan de"
-                            " onverwarmde referentie (strikt positief"
-                            " temperatuurverschil)."
+                            " onverwarmde referentie met een temperatuurverschil"
+                            " van meer dan 1°C."
                         ),
                     ],
                     [
@@ -1023,8 +1022,8 @@ with col_exp2:
                         (
                             "Het gemiddelde temperatuurverschil in graden"
                             " Celsius over de nachtelijke warmteblokken"
-                            " (waarbij de verwarmde rij warmer is dan de"
-                            " onverwarmde referentie)."
+                            " (waarbij de verwarmde rij minimaal 1°C warmer is"
+                            " dan de onverwarmde referentie)."
                         ),
                     ],
                 ]
